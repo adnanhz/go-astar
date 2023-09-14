@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<header>
+    <title>A Star</title>
+</header>
+<style id="styles">
+    #wrapper {
+        background-color: grey;
+        width: 1600px;
+        height: 950px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    #canvas {
+        width: 1500px;
+        height: 900px;
+        background-color: grey;
+        position: relative;
+    }
+
+    .nodeContainer {
+        margin: 3px;
+    }
+
+    .node {
+        width: 10px;
+        height: 10px;
+        background-color: blue;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        color: white;
+        font-size: 20px;
+    }
+
+    .label {
+        display: none;
+    }
+
+    #root {
+        display: flex;
+    }
+
+    #controlPanel {
+        display: flex;
+        flex-direction: column;
+        margin: 10px;
+    }
+</style>
+
+<body>
+    <div id="root">
+        <div id="controlPanel">
+            <h4>Active mode: <span id="activeModeLabel"></span></h4>
+            <button id="addNodesButton">
+                Add nodes
+            </button>
+            <button id="startNodeButton">
+                Select start node
+            </button>
+            <button id="endNodeButton">
+                Select end node
+            </button>
+            <button id="verticesButton">
+                Set vertices
+            </button>
+            <button id="generate">
+                Generate random graph
+            </button>
+            <button id="getResult">
+                Get result
+            </button>
+            <div>
+                Vertices count
+                <input type="number" placeholder="vertices count" id="desiredVerticesCount" value="10" />
+            </div>
+            <div>
+                Vertices reruns
+                <input type="number" placeholder="vertices regeneration" id="desiredVerticesRegeneration" value="1" />
+            </div>
+            <div>
+                Recalculate X times
+                <input type="number" placeholder="reruns" id="reruns" value="1" />
+            </div>
+            <div>
+                Use multithreading
+                <input type="checkbox" id="parallelise" />
+            </div>
+            <div id="timer"></div>
+            <div id="nodesInfo"></div>
+            <div id="verticesInfo"></div>
+        </div>
+        <div id="wrapper">
+            <div id="canvas">
+                <svg id="svg" width="1500" height="900">
+                </svg>
+            </div>
+        </div>
+    </div>
+    <script>
+        const MODE_ADD_NODES = 'ADD_NODES'
+        const MODE_SET_START_NODE = 'SET_START_NODE'
+        const MODE_SET_END_NODE = 'SET_END_NODE'
+        const MODE_SET_VERTICES = 'SET_VERTICES'
+        let mode = MODE_ADD_NODES
+        document.getElementById('activeModeLabel').innerHTML = mode
+        let canvas = document.getElementById("canvas")
+        let index = 0
+        let startNodeHtml, endNodeHtml, startNode, endNode
+        let nodes = {}
+        let nodesArray = []
+        let vertices = []
+        let activeVertexStart, activeVertexEnd
+        const WIDTH = 1600
+        const HEIGHT = 950
+        const NODE_DISTANCE = 45
+        const NODE_SIZE = 10
+        function readUserValues() {
+            let desiredVerticesCount = parseInt(document.getElementById('desiredVerticesCount').value)
+            let desiredVerticesRegeneration = parseInt(document.getElementById('desiredVerticesRegeneration').value)
+            let reruns = parseInt(document.getElementById('reruns').value)
+            let parallelise = document.getElementById('parallelise').checked
+            return { desiredVerticesCount, desiredVerticesRegeneration, reruns, parallelise }
+        }
+        function getRandomInt(min, max) {
+            min = Math.ceil(min);
+            max = Math.floor(max);
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+        function addNode(e) {
+            let rect = e.target.getBoundingClientRect();
+            let x = Math.floor(e.clientX - rect.left - NODE_SIZE);
+            let y = Math.floor(e.clientY - rect.top - NODE_SIZE);
+            nodes[`${x}-${y}`] = { x, y }
+            index++;
+            return { x, y }
+        }
+        function addNodeHtml(node) {
+            let style = `position: absolute; top: ${node.y}px; left: ${node.x}px;`;
+            let nodeContainer = `
+                <div class='nodeContainer' style="${style}">
+                    <div class='node' id='${node.x}-${node.y}'></div>
+                    <div class='label'>${node.x}, ${node.y}</div>
+                    </div>`;
+            canvas.innerHTML += nodeContainer;
+        }
+        function setStartNode(node) {
+            let currentStart = document.querySelector('[data-start=true]')
+            if (currentStart) {
+                currentStart.removeAttribute('data-start')
+                currentStart.style.backgroundColor = 'pink'
+                let position = currentStart.id.replace('-', ', ')
+                currentStart.parentElement.querySelector('.label').innerHTML = position
+            }
+            let newStart = document.getElementById(`${node.x}-${node.y}`)
+            if (newStart) {
+                // because if we don't render, we don't want to change dom
+                newStart.setAttribute('data-start', true)
+                newStart.style.backgroundColor = 'white'
+                console.log(newStart.style.backgroundColor)
+                newStart.parentElement.querySelector('.label').innerHTML = "START"
+            }
+            startNode = node
+        }
+
+        function setEndNode(node) {
+            let currentEnd = document.querySelector('[data-end=true]')
+            if (currentEnd) {
+                currentEnd.removeAttribute('data-end')
+                currentEnd.style.backgroundColor = 'pink'
+                let position = currentEnd.id.replace('-', ', ')
+                currentEnd.parentElement.querySelector('.label').innerHTML = position
+            }
+            let newEnd = document.getElementById(`${node.x}-${node.y}`)
+            if (newEnd) {
+                newEnd.setAttribute('data-end', true)
+                newEnd.style.backgroundColor = 'black'
+                newEnd.parentElement.querySelector('.label').innerHTML = "END"
+            }
+            endNode = node
+        }
+
+        function addVertex(startNode, endNode) {
+            let vertex = { start: { ...startNode }, end: { ...endNode } }
+            vertices.push(vertex)
+            return vertex
+        }
+        function addVertexSvg(vertex, i) {
+            console.log('adding vertex', i)
+            let lineHtml = `<line id="line-${i}" stroke="blue" stroke-width="10"  />`
+            document.getElementById('svg').innerHTML += lineHtml
+            let line = document.getElementById(`line-${i}`)
+            line.setAttribute('x1', vertex.start.x + 5)
+            line.setAttribute('y1', vertex.start.y + 5)
+            line.setAttribute('x2', vertex.end.x + 5)
+            line.setAttribute('y2', vertex.end.y + 5)
+        }
+
+        function generateGraph(render = true) {
+            let { desiredVerticesCount, desiredVerticesRegeneration } = readUserValues()
+            vertices = []
+            nodes = {}
+            canvas.innerHTML = `<svg id="svg" width="${WIDTH}" height="${HEIGHT}"></svg>`
+            nodesArray = [];
+            for (let x = 0; x < WIDTH - (NODE_DISTANCE * 2); x += NODE_DISTANCE) {
+                for (let y = 0; y < HEIGHT - (NODE_DISTANCE * 2); y += NODE_DISTANCE) {
+                    nodes[`${x}-${y}`] = { x, y }
+                    if (render) {
+                        addNodeHtml({ x, y })
+                    }
+                    nodesArray.push({ x, y })
+                }
+            }
+            let startIndex = getRandomInt(0, nodesArray.length - 1)
+            let endIndex = getRandomInt(0, nodesArray.length - 1)
+            let startNode = nodesArray[startIndex]
+            let endNode = nodesArray[endIndex]
+            setStartNode(startNode)
+            setEndNode(endNode)
+            let startNodeId = startNode.x + '-' + startNode.y
+            let endNodeId = endNode.x + '-' + endNode.y
+            let currentNode = startNode
+            for (let r = 0; r < desiredVerticesRegeneration; r++) {
+                for (let i = 0; i < desiredVerticesCount; i++) {
+                    let leftX = currentNode.x - NODE_DISTANCE
+                    let topY = currentNode.y - NODE_DISTANCE
+                    let rightX = currentNode.x + NODE_DISTANCE
+                    let bottomY = currentNode.y + NODE_DISTANCE
+                    let myX = currentNode.x
+                    let myY = currentNode.y
+                    let adjacentNodes = [leftX + '-' + topY, myX + '-' + topY, rightX + '-' + topY, rightX + '-' + myY, leftX + '-' + myY, leftX + '-' + bottomY, myX + '-' + bottomY, rightX + '-' + bottomY]
+                    let nextNodeIndex = getRandomInt(0, adjacentNodes.length - 1)
+                    let nextNodeId = adjacentNodes[nextNodeIndex]
+                    let nextNode = nodes[nextNodeId]
+                    while (!nextNode) {
+                        let nextNodeIndex = getRandomInt(0, adjacentNodes.length - 1)
+                        let nextNodeId = adjacentNodes[nextNodeIndex]
+                        nextNode = nodes[nextNodeId]
+                    }
+                    let vertex = addVertex(currentNode, nextNode)
+                    let currentNodeId = currentNode.x + '-' + currentNode.y
+
+                    if (render) {
+                        if (currentNodeId !== startNodeId && currentNodeId !== endNodeId) {
+                            document.getElementById(currentNode.x + '-' + currentNode.y).style.backgroundColor = 'blue';
+                        }
+                        addVertexSvg(vertex, i)
+                    }
+                    currentNode = nextNode
+                }
+            }
+            return { graph: vertices, start: startNode, end: endNode }
+        }
+        canvas.onclick = (e) => {
+            if (mode === MODE_ADD_NODES) {
+                if (e.target.id !== "canvas" && e.target.id !== "svg") {
+                    return;
+                }
+                let node = addNode(e)
+                addNodeHtml(node)
+            }
+            if (mode === MODE_SET_START_NODE) {
+
+                if (!e.target.classList.contains('node')) {
+                    return;
+                }
+                id = e.target.id
+                setStartNode({ x: parseInt(id.split('-')[0]), y: parseInt(id.split('-')[1]) })
+            }
+            if (mode === MODE_SET_END_NODE) {
+                if (!e.target.classList.contains('node')) {
+                    return;
+                }
+                id = e.target.id
+                setEndNode({ x: parseInt(id.split('-')[0]), y: parseInt(id.split('-')[1]) })
+            }
+
+            if (mode === MODE_SET_VERTICES) {
+                if (!e.target.classList.contains('node')) {
+                    return;
+                }
+                let nodeHtml = e.target
+                let node = nodes[nodeHtml.id]
+                if (!node) {
+                    console.log('node not found')
+                    return
+                }
+
+                if (!activeVertexStart) {
+                    activeVertexStart = { ...node, id: e.target.id }
+                } else if (!activeVertexEnd) {
+                    activeVertexEnd = { ...node, id: e.target.id }
+                }
+                if (activeVertexStart && activeVertexEnd) {
+                    let vertex = addVertex(activeVertexStart, activeVertexEnd)
+                    addVertexSvg(vertex, vertices.length)
+                    activeVertexStart = null
+                    activeVertexEnd = null
+                }
+            }
+        }
+
+        document.getElementById('canvas').onmouseout = (e) => {
+            if (e.target.id !== 'canvas') {
+                return
+            }
+            activeVertexEnd = null
+            activeVertexStart = null
+        }
+
+        document.getElementById('canvas').onmouseover = (e) => {
+            if (mode !== MODE_SET_VERTICES) {
+                return;
+            }
+            if (!e.target.classList.contains('node')) {
+                return;
+            }
+            let nodeHtml = e.target
+            let node = nodes[nodeHtml.id]
+            if (!node) {
+                console.log('node not found')
+                return
+            }
+
+            if (!activeVertexStart) {
+                activeVertexStart = { ...node, id: e.target.id }
+                e.target.style.backgroundColor = 'blue';
+            }
+            else if (!activeVertexEnd) {
+                activeVertexEnd = { ...node, id: e.target.id }
+                e.target.style.backgroundColor = 'blue';
+            }
+            if (activeVertexStart && activeVertexEnd) {
+                let vertex = addVertex(activeVertexStart, activeVertexEnd)
+                addVertexSvg(vertex, vertices.length)
+                activeVertexStart = activeVertexEnd
+                activeVertexEnd = null
+            }
+        }
+
+        document.getElementById('addNodesButton').onclick = (e) => {
+            mode = MODE_ADD_NODES
+            document.getElementById('activeModeLabel').innerHTML = mode
+        }
+        document.getElementById('startNodeButton').onclick = (e) => {
+            mode = MODE_SET_START_NODE
+            document.getElementById('activeModeLabel').innerHTML = mode
+            Array.from(document.getElementsByClassName('node')).map((el) => {
+                if (el.style.backgroundColor !== 'black') {
+                    // don't change color of end node
+                    el.style.backgroundColor = 'pink';
+                    el.style.width = NODE_SIZE + "px";
+                    el.style.height = NODE_SIZE + "px";
+                    console.log(el.style.width)
+                }
+            })
+        }
+        document.getElementById('endNodeButton').onclick = (e) => {
+            mode = MODE_SET_END_NODE
+            document.getElementById('activeModeLabel').innerHTML = mode
+            Array.from(document.getElementsByClassName('node')).map((el) => {
+                if (el.style.backgroundColor !== 'white') {
+                    // don't change color of start node
+                    el.style.backgroundColor = 'pink';
+                    el.style.width = NODE_SIZE;
+                    el.style.height = NODE_SIZE;
+                }
+            })
+        }
+        document.getElementById('verticesButton').onclick = (e) => {
+            mode = MODE_SET_VERTICES
+            document.getElementById('activeModeLabel').innerHTML = mode
+        }
+        document.getElementById('generate').onclick = (e) => {
+            generateGraph(false)
+            for (let i = 0; i < nodesArray.length; i++) {
+                setTimeout(() => {
+                    addNodeHtml({ x: nodesArray[i].x, y: nodesArray[i].y })
+                    document.getElementById('nodesInfo').innerHTML = `${i + 1} / ${nodesArray.length} nodes generated`
+                }, 10 + (i * 10))
+            }
+            for (let i = 0; i < vertices.length; i++) {
+                setTimeout(() => {
+                    addVertexSvg(vertices[i], i)
+                    document.getElementById('verticesInfo').innerHTML = `${i + 1} / ${vertices.length} vertices generated`
+                }, 100 + (i * 50))
+            }
+        }
+        document.getElementById('getResult').onclick = async (e) => {
+            Array.from(document.getElementsByClassName('node')).map((el) => {
+                el.style.backgroundColor = 'blue';
+                el.style.width = 0;
+                el.style.height = 0;
+            })
+            document.getElementById('timer').innerHTML = "Running..."
+            let startTime = Date.now();
+            const { reruns, parallelise } = readUserValues()
+            const response = await fetch('http://localhost:8080/astar', {
+                method: 'POST',
+                body: JSON.stringify({ graph: vertices, start: startNode, end: endNode, reruns, parallelise }),
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+            })
+            const pathNodes = await response.json();
+            let endTime = Date.now()
+            document.getElementById('timer').innerHTML = "Time taken: " + (endTime - startTime) + "ms"
+            let counter = 1
+            for (let node of pathNodes) {
+                let nodeHtml = document.getElementById(node.X + '-' + node.Y)
+                nodeHtml.innerHTML = counter
+                nodeHtml.style.backgroundColor = 'orange'
+                counter++
+            }
+        }
+    </script>
+</body>
+
+</html>
